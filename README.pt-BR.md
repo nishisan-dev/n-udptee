@@ -252,6 +252,34 @@ métodos equivalentes. Resultados medidos nesta entrega estão em
 A CI compila e testa nativamente em Linux amd64 e arm64 com CGO/libpcap, executa
 race/fuzz e o laboratório. Não presume cross-compilation CGO trivial.
 
+## Releases automáticas
+
+Envie uma tag SemVer estável para disparar `.github/workflows/release.yaml`:
+
+```sh
+git tag -a v0.1.0 -m "Release v0.1.0"
+git push origin v0.1.0
+```
+
+O workflow exige exatamente `vX.Y.Z`, sem zeros iniciais, sufixos ou build metadata.
+Ele executa a CI completa nas duas arquiteturas, compila nativamente Linux amd64
+e arm64 e publica uma release com notas automáticas, dois arquivos `.tar.gz`
+e `SHA256SUMS`. Cada pacote inclui binário, README nos dois idiomas, YAML e unit systemd. A versão
+do binário vem da tag, com commit e horário de build.
+
+Os binários usam CGO e dependem de libpcap compartilhada (`libpcap.so.0.8`) e de
+runtime compatível com Ubuntu 24.04/glibc 2.39 ou posterior. Para distribuições
+mais antigas, compile a partir do código usando a libpcap local.
+
+A publicação usa draft até todos os arquivos estarem enviados. Se testes, build
+ou publicação falharem, a limpeza não é executada. Após publicar, ficam somente
+as **cinco releases estáveis mais recentes pela data de publicação**; as anteriores
+e seus assets são excluídos. Tags Git, drafts, prereleases e releases com nomes
+fora de `vX.Y.Z` são preservados. Uma nova publicação, mesmo de versão numericamente
+menor, conta como mais recente. O fluxo usa `GITHUB_TOKEN` com escrita apenas no
+job de publicação, sem PAT adicional. Criar a tag apenas localmente não dispara
+o workflow; é necessário enviá-la ao GitHub.
+
 ## Troubleshooting e limites da v0.1.0
 
 | Sintoma | Verificação |

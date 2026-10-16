@@ -254,6 +254,35 @@ Standard tests do not silently run privileged integration tests. `make integrati
 
 The GitHub Actions workflow builds/tests on native Linux amd64 and arm64 runners with libpcap/CGO. The recorded local execution in the report was on amd64; do not infer extra validation or production SLAs.
 
+## Automated releases
+
+Push a stable version tag to run `.github/workflows/release.yaml`:
+
+```sh
+git tag -a v0.1.0 -m "Release v0.1.0"
+git push origin v0.1.0
+```
+
+The tag must match `vX.Y.Z` exactly, without leading zeros, prerelease suffixes,
+or build metadata. The workflow runs the full CI on both architectures, builds
+native Linux amd64 and arm64 binaries, then publishes generated release notes,
+two `.tar.gz` packages and `SHA256SUMS`. Packages include the binary, both README
+languages, example YAML and systemd unit. Binary version comes from the tag,
+with commit and build time embedded.
+
+The binaries use CGO and require shared libpcap (`libpcap.so.0.8`) and a runtime
+compatible with Ubuntu 24.04/glibc 2.39 or newer. Build from source against your
+local libpcap for older distributions.
+
+Releases stay in draft until all assets are uploaded. Failed tests, builds or
+publication prevent cleanup. After publication, only the **five most recently
+published stable `vX.Y.Z` releases** are retained; older releases and their assets
+are deleted. Git tags, drafts, prereleases and other release naming schemes
+are preserved. Publication time determines retention, even when the version
+number is lower than an earlier release. Only the publishing job receives
+`contents: write`; the workflow uses `GITHUB_TOKEN` and needs no additional PAT.
+A local tag alone does not trigger the workflow: push it to GitHub.
+
 ## Troubleshooting
 
 | Symptom | What to check |

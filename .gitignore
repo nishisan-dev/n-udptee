@@ -2,3 +2,5 @@
 *.test
 *.prof
 __pycache__/
+
+/dist/
