@@ -7,7 +7,7 @@
 
 **Capture one UDP datagram and replicate it to multiple destinations — without load balancing, changing the payload, or interrupting the original listener.**
 
-**n-udptee** is an open-source-oriented, Linux-native **UDP packet duplicator, UDP mirror, and 1:N UDP fan-out relay** written in Go. It uses **libpcap/BPF** for passive ingress capture and supports **source IP and source UDP port preservation** through raw IPv4 packet transmission.
+**n-udptee** is a Linux-native **UDP packet duplicator, UDP mirror, and 1:N UDP fan-out relay** written in Go. It uses **libpcap/BPF** for passive ingress capture and supports **source IP and source UDP port preservation** through raw IPv4 packet transmission.
 
 Built for **SNMP trap forwarding and duplication**, it also handles **Syslog over UDP, NetFlow, and other UDP traffic** without parsing their application protocols.
 
