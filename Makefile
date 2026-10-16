@@ -1,5 +1,5 @@
 GO ?= go
-VERSION ?= 0.1.0
+VERSION ?= 0.2.0
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.buildTime=$(BUILD_TIME)
@@ -21,8 +21,10 @@ race:
 	$(GO) test -race ./...
 fuzz:
 	$(GO) test ./internal/decode -run '^$$' -fuzz '^FuzzDecode$$' -fuzztime=10s -parallel=2
+	$(GO) test ./internal/reassembly -run '^$$' -fuzz '^FuzzReassembly$$' -fuzztime=10s -parallel=2
 check: build
 	./build/n-udptee check --config configs/example.yaml
+	./build/n-udptee check --config configs/fragments.yaml
 integration:
 	N_UDPTEE_INTEGRATION=1 $(GO) test -v -count=1 -timeout=120s ./tests/integration
 bench:

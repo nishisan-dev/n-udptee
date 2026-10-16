@@ -119,7 +119,19 @@ func (e *Engine) run(w *worker) {
 			continue
 		default:
 		}
-		if err := w.s.Send(d); err != nil {
+		type fragmentReporter interface{ FragmentStats() (uint64, uint64) }
+		reporter, hasStats := w.s.(fragmentReporter)
+		var beforeAttempts, beforeFragments uint64
+		if hasStats {
+			beforeAttempts, beforeFragments = reporter.FragmentStats()
+		}
+		err := w.s.Send(d)
+		if hasStats {
+			attempts, fragments := reporter.FragmentStats()
+			e.m.RawFragmentAttempts.WithLabelValues(w.rule, w.target).Add(float64(attempts - beforeAttempts))
+			e.m.RawFragments.WithLabelValues(w.rule, w.target).Add(float64(fragments - beforeFragments))
+		}
+		if err != nil {
 			reason := Reason(err)
 			e.m.Errors.WithLabelValues(w.rule, w.target, reason).Inc()
 			if time.Since(w.lastLog) >= time.Second {
@@ -156,4 +168,8 @@ func (e *Engine) Shutdown(ctx context.Context) {
 			<-done
 		}
 	})
+}
+
+func (e *Engine) MayMatchAddresses(src, dst netip.Addr) bool {
+	return e.matcher.MayMatchAddresses(src, dst)
 }

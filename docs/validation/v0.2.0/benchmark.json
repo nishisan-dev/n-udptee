@@ -1,0 +1,23 @@
+{
+  "payload_bytes": 256,
+  "targets": 2,
+  "injected": 20000,
+  "wall_seconds": 1.1917691710405052,
+  "captured": 19524.0,
+  "send_success": 16433.0,
+  "capture_pps": 16382.36705095674,
+  "send_pps": 13788.743994487406,
+  "cpu_seconds": 0.13,
+  "cpu_percent_one_core": 10.908152615367632,
+  "rss_bytes": 93609984,
+  "kernel_drops": 480.0,
+  "queue_drops": 22615.0,
+  "uname": [
+    "Linux",
+    "nishi-notebook",
+    "6.8.0-138-generic",
+    "#138~22.04.1-Ubuntu SMP PREEMPT_DYNAMIC Fri Aug  7 13:43:15 UTC ",
+    "x86_64"
+  ],
+  "note": "Laboratory includes Python generators/listeners, bridge/veth, namespace entry and drain wait; no guaranteed throughput."
+}

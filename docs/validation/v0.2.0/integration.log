@@ -1,0 +1,12 @@
+N_UDPTEE_INTEGRATION=1 go test -v -count=1 -timeout=120s ./tests/integration
+=== RUN   TestNamespaces
+    integration_test.go:44: PASS raw_ipv4 original + two targets, payload/source, ingress, errors, burst, shutdown
+        PASS udp_socket original + two targets, payload/source, ingress, errors, burst, shutdown
+        PASS raw_ipv4 destination port rewrite
+        PASS fragmented defaults and independent reassembly option
+        PASS raw_ipv4 fragmented SNMP trap/binary/max payload, independent MTUs/checksums, out-of-order/duplicate, missing/overlap, bounds, failure isolation and shutdown
+        PASS udp_socket fragmented SNMP trap/binary/max payload, independent MTUs/checksums, out-of-order/duplicate, missing/overlap, bounds, failure isolation and shutdown
+        
+--- PASS: TestNamespaces (22.01s)
+PASS
+ok  	github.com/nishisan-dev/n-udptee/tests/integration	22.008s

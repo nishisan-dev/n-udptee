@@ -1,7 +1,9 @@
 # n-udptee — Especificação técnica de implementação
 
-**Status:** proposta para implementação pelo Codex  
-**Versão da especificação:** 1.0  
+**Status:** v0.1.0 implementada; extensão v0.2.0 aprovada na seção 16
+
+**Versão da especificação:** 1.1
+
 **Plataforma inicial:** Linux  
 **Linguagem:** Go  
 **Escopo de protocolo:** UDP sobre IPv4, exclusivamente no MVP
@@ -437,3 +439,88 @@ A entrega só é considerada completa quando:
 - gopacket mantido pela comunidade (usar release atual com correções de segurança): https://github.com/gopacket/gopacket
 - API de captura `gopacket/pcap`: https://pkg.go.dev/github.com/gopacket/gopacket/pcap
 - Serialização de camadas e validação UDP/IPv4: https://pkg.go.dev/github.com/gopacket/gopacket/layers
+
+
+## 16. Extensão aprovada — v0.2.0
+
+Esta seção substitui as exclusões de remontagem/fragmentação das seções anteriores
+somente quando as opções abaixo estiverem habilitadas. Os padrões da v0.1.0
+continuam em vigor: entrada fragmentada descartada e nenhuma fragmentação raw.
+Não adicionar interpretação ou transformação de SNMP: traps são payload UDP opaco.
+
+### Configuração (version: 1 compatível)
+
+```yaml
+reassembly:
+  enabled: false
+  timeout_seconds: 30
+  max_datagrams: 1024
+  max_bytes: 33554432
+  max_fragments_per_datagram: 128
+replication:
+  fragmentation: drop   # drop | auto; default drop
+```
+
+- As duas opções são independentes e opt-in. `auto` em raw permite fragmentação
+  explícita pela MTU da rota; em udp_socket habilita fragmentação pelo kernel.
+  Em `drop`, preservar o comportamento anterior de cada sender, incluindo a
+  política padrão do kernel para UDP sockets.
+- Validar timeout 1..60 s; contextos 1..65536; payloads retidos 65535..268435456
+  bytes; fragmentos únicos por contexto 2..8192. Defaults conforme o YAML acima.
+- `max_datagrams` inclui contextos em andamento e tombstones de datagramas já
+  completos/rejeitados, preservados até o timeout original para não replicar
+  novamente duplicatas tardias. Isso limita a taxa sustentável de novos IDs
+  fragmentados; nunca afeta o caminho de datagramas não fragmentados.
+- Usar BPF que inclua todos os fragmentos UDP, por exemplo
+  `ip proto 17 and dst host 192.0.2.10`; filtrar portas após remontagem.
+  O filtro do operador não será ampliado silenciosamente. Explicar esse requisito
+  no check/runtime, exemplos e README. Snaplen 262144 é recomendado.
+
+### Entrada
+
+- Validar Ethernet/até duas VLANs e IPv4 antes de guardar dados. Usar chave com
+  interface, pilha VLAN, origem, destino, protocolo e ID IPv4.
+- Aceitar ordem arbitrária e duplicatas exatas (mesmo offset, tamanho, MF e bytes).
+  Rejeitar qualquer sobreposição parcial, duplicata conflitante, DF com fragmentos,
+  comprimentos inválidos, limites incoerentes, MF desalinhado de 8 bytes e UDP
+  inválido após remontagem. Nenhum payload parcial pode chegar ao fan-out.
+- Limites globais e por contexto devem ser checados antes de copiar bytes.
+  Timeout usa tempo monotônico local desde o primeiro fragmento, não é renovado
+  por duplicatas. Remover expirados também durante captura ociosa; limpar no shutdown.
+- Fazer match de endereços antes de reter fragmentos e aplicar porta/primeira regra
+  somente ao datagrama completo. Payload emitido é imutável e byte a byte idêntico.
+- Não exigir checksum de entrada por causa de offload. Preservar a política de
+  validação estrutural da v0.1.0; sempre calcular checksums de saída em software.
+
+### Saída
+
+- Raw mantém IP/porta de origem; checksum UDP calculado sobre o datagrama completo
+  para cada target; checksum IPv4 calculado em cada fragmento.
+- Consultar a MTU da rota no socket conectado ao target em cada tentativa. Se
+  necessário, dividir em limites de 8 bytes, com ID não zero comum, offsets e MF
+  corretos e DF limpo. Não depender de fragmentação automática com IP_HDRINCL.
+- Não reutilizar IDs emitidos pelo processo durante 60 s. A reserva é global,
+  limitada a 65535 IDs; esgotamento gera backpressure, sem bloquear ou retry.
+  IDs de outros emissores/processos e políticas remotas continuam fora do controle.
+- Uma tentativa lógica por target pode conter várias syscalls de fragmentos;
+  parar no primeiro erro. Sucesso só quando todos forem aceitos. Fragmentos já
+  aceitos não podem ser recolhidos; remontagem remota incompleta poderá expirar.
+- UDP socket em auto usa IP_MTU_DISCOVER=IP_PMTUDISC_DONT e mantém origem do relay.
+- Novas métricas: eventos de remontagem por enum, contextos/ativos/bytes retidos,
+  tentativas de fragmentação raw e fragmentos aceitos por target. Não inventar
+  contagem de fragmentos gerados internamente pelo kernel no modo UDP socket.
+
+### Aceite adicional
+
+- Unitários/fuzz: fragmentos fora de ordem, duplicados, conflitantes/sobrepostos,
+  VLAN/interface, cabeçalhos/opções/tamanhos inválidos, timeout, limites de bytes,
+  contextos e fragmentos, duplicatas tardias e limpeza no shutdown.
+- Saída raw: conferir alinhamento, IDs, flags, MTU e checksums independentemente;
+  testar erro parcial sem retry e esgotamento de IDs.
+- Namespaces: trap SNMPv2c grande fragmentada + datagramas binários; original e
+  dois extras recebem uma cópia idêntica. Em raw, origem preservada e MTUs de saída
+  diferentes respeitadas. Cobrir relay, falta de fragmento, ordem/duplicação,
+  overlap, expiração, isolamento de falha e padrões desabilitados.
+- Executar fmt-check, vet, unitários, race, fuzz e integração; atualizar README
+  inglês/português, exemplo opt-in e relatório v0.2.0. Comitar/push e publicar
+  via tag v0.2.0 somente após validação, acompanhando o workflow até o fim.

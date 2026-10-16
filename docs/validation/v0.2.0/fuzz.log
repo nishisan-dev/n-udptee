@@ -1,0 +1,18 @@
+go test ./internal/decode -run '^$' -fuzz '^FuzzDecode$' -fuzztime=10s -parallel=2
+fuzz: elapsed: 0s, gathering baseline coverage: 0/14 completed
+fuzz: elapsed: 0s, gathering baseline coverage: 14/14 completed, now fuzzing with 2 workers
+fuzz: elapsed: 3s, execs: 333625 (111188/sec), new interesting: 1 (total: 15)
+fuzz: elapsed: 6s, execs: 667573 (111314/sec), new interesting: 1 (total: 15)
+fuzz: elapsed: 9s, execs: 994407 (108957/sec), new interesting: 1 (total: 15)
+fuzz: elapsed: 10s, execs: 1105829 (100772/sec), new interesting: 1 (total: 15)
+PASS
+ok  	github.com/nishisan-dev/n-udptee/internal/decode	10.113s
+go test ./internal/reassembly -run '^$' -fuzz '^FuzzReassembly$' -fuzztime=10s -parallel=2
+fuzz: elapsed: 0s, gathering baseline coverage: 0/2 completed
+fuzz: elapsed: 0s, gathering baseline coverage: 2/2 completed, now fuzzing with 2 workers
+fuzz: elapsed: 3s, execs: 4951 (1650/sec), new interesting: 3 (total: 5)
+fuzz: elapsed: 6s, execs: 4951 (0/sec), new interesting: 3 (total: 5)
+fuzz: elapsed: 9s, execs: 4951 (0/sec), new interesting: 3 (total: 5)
+fuzz: elapsed: 11s, execs: 4951 (0/sec), new interesting: 3 (total: 5)
+PASS
+ok  	github.com/nishisan-dev/n-udptee/internal/reassembly	11.017s

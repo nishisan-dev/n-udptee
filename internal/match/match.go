@@ -46,3 +46,13 @@ func (m *Matcher) Match(d *model.Datagram) int {
 	}
 	return -1
 }
+
+// MayMatchAddresses prefilters fragments without reading nonexistent UDP ports.
+func (m *Matcher) MayMatchAddresses(src, dst netip.Addr) bool {
+	for _, r := range m.rules {
+		if contains(r.sources, src) && contains(r.destinations, dst) {
+			return true
+		}
+	}
+	return false
+}

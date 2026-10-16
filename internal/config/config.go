@@ -21,11 +21,20 @@ type Capture struct {
 	Snaplen     int    `yaml:"snaplen"`
 	Buffer      int    `yaml:"buffer_size_bytes"`
 }
+type Reassembly struct {
+	Enabled        bool `yaml:"enabled"`
+	TimeoutSeconds int  `yaml:"timeout_seconds"`
+	MaxDatagrams   int  `yaml:"max_datagrams"`
+	MaxBytes       int  `yaml:"max_bytes"`
+	MaxFragments   int  `yaml:"max_fragments_per_datagram"`
+}
+
 type Replication struct {
-	Mode   string `yaml:"mode"`
-	TTL    int    `yaml:"ttl"`
-	Queue  int    `yaml:"queue_size_per_target"`
-	OnFull string `yaml:"on_queue_full"`
+	Fragmentation string `yaml:"fragmentation"`
+	Mode          string `yaml:"mode"`
+	TTL           int    `yaml:"ttl"`
+	Queue         int    `yaml:"queue_size_per_target"`
+	OnFull        string `yaml:"on_queue_full"`
 }
 type Match struct {
 	Sources      []string `yaml:"source_cidrs"`
@@ -52,6 +61,7 @@ type Logging struct {
 }
 type Config struct {
 	Version     int         `yaml:"version"`
+	Reassembly  Reassembly  `yaml:"reassembly"`
 	Capture     Capture     `yaml:"capture"`
 	Replication Replication `yaml:"replication"`
 	Rules       []Rule      `yaml:"rules"`
@@ -68,7 +78,7 @@ func Load(path string) (Config, error) {
 	return Read(f)
 }
 func Read(r io.Reader) (Config, error) {
-	c := Config{Capture: Capture{Direction: "in", Snaplen: 65535, Buffer: 33554432}, Replication: Replication{Mode: "raw_ipv4", TTL: 64, Queue: 4096, OnFull: "drop_newest"}, Metrics: Metrics{Enabled: true, Listen: "127.0.0.1:9109"}, Logging: Logging{Level: "info", Format: "json"}}
+	c := Config{Reassembly: Reassembly{TimeoutSeconds: 30, MaxDatagrams: 1024, MaxBytes: 33554432, MaxFragments: 128}, Capture: Capture{Direction: "in", Snaplen: 65535, Buffer: 33554432}, Replication: Replication{Fragmentation: "drop", Mode: "raw_ipv4", TTL: 64, Queue: 4096, OnFull: "drop_newest"}, Metrics: Metrics{Enabled: true, Listen: "127.0.0.1:9109"}, Logging: Logging{Level: "info", Format: "json"}}
 	data, err := io.ReadAll(io.LimitReader(r, (1<<20)+1))
 	if err != nil {
 		return c, err
@@ -112,6 +122,12 @@ func (c Config) Validate() error {
 	}
 	if c.Replication.TTL < 1 || c.Replication.TTL > 255 || c.Replication.Queue < 1 || c.Replication.Queue > 65536 || c.Replication.OnFull != "drop_newest" {
 		return fail("invalid TTL, queue or on_queue_full")
+	}
+	if c.Replication.Fragmentation != "drop" && c.Replication.Fragmentation != "auto" {
+		return fail("replication.fragmentation must be drop or auto")
+	}
+	if c.Reassembly.TimeoutSeconds < 1 || c.Reassembly.TimeoutSeconds > 60 || c.Reassembly.MaxDatagrams < 1 || c.Reassembly.MaxDatagrams > 65536 || c.Reassembly.MaxBytes < 65535 || c.Reassembly.MaxBytes > 268435456 || c.Reassembly.MaxFragments < 2 || c.Reassembly.MaxFragments > 8192 {
+		return fail("invalid reassembly limits: timeout 1..60 s, contexts 1..65536, bytes 65535..268435456, fragments 2..8192")
 	}
 	if len(c.Rules) == 0 {
 		return fail("rules required")

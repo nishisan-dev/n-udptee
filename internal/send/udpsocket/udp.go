@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/nishisan-dev/n-udptee/internal/model"
+	"golang.org/x/sys/unix"
 )
 
 type Sender struct {
@@ -13,10 +14,30 @@ type Sender struct {
 	target netip.AddrPort
 }
 
-func New(t netip.AddrPort) (*Sender, error) {
+func New(t netip.AddrPort) (*Sender, error)            { return newSender(t, false) }
+func NewFragmenting(t netip.AddrPort) (*Sender, error) { return newSender(t, true) }
+func newSender(t netip.AddrPort, fragment bool) (*Sender, error) {
 	c, e := net.ListenUDP("udp4", nil)
 	if e != nil {
 		return nil, e
+	}
+	if fragment {
+		raw, err := c.SyscallConn()
+		if err != nil {
+			c.Close()
+			return nil, err
+		}
+		var optionErr error
+		err = raw.Control(func(fd uintptr) {
+			optionErr = unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_MTU_DISCOVER, unix.IP_PMTUDISC_DONT)
+		})
+		if err == nil {
+			err = optionErr
+		}
+		if err != nil {
+			c.Close()
+			return nil, err
+		}
 	}
 	return &Sender{conn: c, target: t}, nil
 }

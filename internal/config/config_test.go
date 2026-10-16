@@ -60,3 +60,41 @@ func TestValidationMatrix(t *testing.T) {
 		}
 	}
 }
+
+func TestFragmentOptions(t *testing.T) {
+	b, e := os.ReadFile("../../configs/example.yaml")
+	if e != nil {
+		t.Fatal(e)
+	}
+	legacy := strings.ReplaceAll(string(b), "reassembly:\n  enabled: false\n", "")
+	legacy = strings.ReplaceAll(legacy, "  fragmentation: drop\n", "")
+	c, e := Read(strings.NewReader(legacy))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if c.Reassembly.Enabled || c.Replication.Fragmentation != "drop" {
+		t.Fatal("legacy defaults changed")
+	}
+	for _, change := range []func(*Config){func(c *Config) { c.Reassembly.TimeoutSeconds = 0 }, func(c *Config) { c.Reassembly.MaxDatagrams = 65537 }, func(c *Config) { c.Reassembly.MaxBytes = 1 }, func(c *Config) { c.Reassembly.MaxFragments = 1 }, func(c *Config) { c.Replication.Fragmentation = "retry" }} {
+		bad := c
+		change(&bad)
+		if bad.Validate() == nil {
+			t.Fatal("invalid fragment config accepted")
+		}
+	}
+	c.Reassembly.Enabled = true
+	c.Replication.Fragmentation = "auto"
+	if e := c.Validate(); e != nil {
+		t.Fatal(e)
+	}
+}
+
+func TestFragmentExample(t *testing.T) {
+	c, err := Load("../../configs/fragments.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Reassembly.Enabled || c.Replication.Fragmentation != "auto" || c.Capture.Snaplen != 262144 {
+		t.Fatal("opt-in example incomplete")
+	}
+}

@@ -2,7 +2,9 @@ package udpsocket
 
 import (
 	"bytes"
+	"golang.org/x/sys/unix"
 	"net"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -30,5 +32,24 @@ func TestPayload(t *testing.T) {
 		if e != nil || !bytes.Equal(b[:n], p) {
 			t.Fatalf("payload %v %v", b[:n], e)
 		}
+	}
+}
+
+func TestFragmentingSocketPolicy(t *testing.T) {
+	s, e := NewFragmenting(netip.MustParseAddrPort("127.0.0.1:162"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	raw, e := s.conn.SyscallConn()
+	if e != nil {
+		t.Fatal(e)
+	}
+	var policy int
+	var optionErr error
+	if e = raw.Control(func(fd uintptr) {
+		policy, optionErr = unix.GetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_MTU_DISCOVER)
+	}); e != nil || optionErr != nil || policy != unix.IP_PMTUDISC_DONT {
+		t.Fatalf("kernel fragmentation not enabled: policy=%d errors=%v,%v", policy, e, optionErr)
 	}
 }

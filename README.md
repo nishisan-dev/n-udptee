@@ -62,7 +62,7 @@ n-udptee passively observes matching inbound traffic, leaves the original UDP re
 | **NetFlow / UDP telemetry fan-out** | Replicate incoming UDP telemetry to multiple analysis pipelines |
 | **Packet analysis and troubleshooting** | Passively copy selected datagrams to a controlled test receiver |
 
-The tool does **not** interpret SNMP PDUs, acknowledge traps, reconstruct fragmented UDP messages, or provide delivery guarantees.
+The tool does **not** interpret SNMP PDUs, acknowledge traps or provide delivery guarantees. IPv4 reassembly and output fragmentation are available as explicit opt-ins since v0.2.0.
 
 ## Forwarding modes
 
@@ -180,11 +180,83 @@ Ingress-only capture (`PCAP_D_IN`) prevents the process from capturing its own l
 
 ### Fragmentation, MTU, and checksums
 
-Incoming fragmented IPv4 packets (`MF` or a nonzero fragment offset) are discarded: **IP reassembly is not implemented**. Some BPF filters can exclude non-initial fragments before the decoder sees them.
+By default, incoming fragmented IPv4 packets (`MF` or a nonzero offset) are
+discarded, and raw output exceeding route MTU fails with `EMSGSIZE`. This preserves
+the v0.1.0 behavior. v0.2.0 adds two independent opt-ins; see
+[`configs/fragments.yaml`](configs/fragments.yaml) for a complete example.
 
-The raw IPv4 sender builds a 20-byte IPv4 header with zero TOS, DF set, configurable TTL, and software-calculated IPv4/UDP checksums. `IP_HDRINCL` allows Linux to populate some IPv4 fields. When route MTU is insufficient, sending may fail with `EMSGSIZE`; **no truncation, fragmentation, or retry** occurs. A captured source address of `0.0.0.0` is rejected for raw transmission because the kernel would replace it.
+```yaml
+capture:
+  # Include fragments without a UDP header; ports are matched after reassembly.
+  bpf: "ip proto 17 and dst host 192.0.2.10"
+  snaplen: 262144
+reassembly:
+  enabled: true
+  timeout_seconds: 30
+  max_datagrams: 1024
+  max_bytes: 33554432
+  max_fragments_per_datagram: 128
+replication:
+  mode: raw_ipv4
+  fragmentation: auto  # drop (default) | auto
+```
 
-Incoming packet checksums are not a decode acceptance criterion because capture/offload effects can interfere with their visibility. The output checksums are recalculated.
+Merge this excerpt with a full configuration or adapt the complete example.
+SNMP traps remain opaque UDP payloads, including SNMPv1/v2c/v3; no SNMP parsing,
+BER encoding, credential handling or content transformation is added.
+
+**Input reassembly.** Contexts are isolated by interface, VLAN stack, source,
+destination and IPv4 ID (UDP only). Out-of-order fragments and exact duplicates
+are accepted. Partial overlaps, conflicting duplicates, inconsistent lengths,
+DF+fragment combinations, malformed UDP and non-final payloads not aligned to
+8 bytes discard the context. Only a complete datagram enters first-match rules
+and bounded target queues. Source/destination CIDRs prefilter fragments before
+retention; destination ports are checked after completion.
+
+Timeout starts at the first arrival using local monotonic time; duplicates do
+not extend it. Expired contexts are swept periodically even when capture is idle
+and all state is released on shutdown. Limits are checked before retaining bytes:
+timeout 1–60 seconds, contexts 1–65536, buffered bytes 65535–268435456 and unique
+fragments per datagram 2–8192. The YAML values above are defaults except `enabled`,
+which defaults to **false**. The byte budget covers retained fragment payloads;
+metadata, completed output/copy buffers, Go GC and existing queues need additional
+memory. The context cap also includes completed/rejected tombstones until their
+original deadline, suppressing late duplicates. Consequently, new fragmented IDs
+within one timeout window can exhaust capacity even when no payload is pending;
+tune limits for expected traffic. Legitimate reuse of the same key/ID in this
+window is also suppressed. Ordinary unfragmented traffic bypasses this cache.
+
+BPF still controls what can be observed: a port-only filter may exclude later
+fragments and cause timeouts. It is never silently expanded. Use `ip proto 17`
+with appropriate address filters; `check` and startup explain the requirement.
+
+**Output fragmentation.** In `raw_ipv4`, `fragmentation: auto` queries the target
+route MTU for each logical send, computes the complete UDP checksum once, and
+creates correctly aligned IPv4 fragments with a common nonzero ID, MF/offset
+and per-fragment IPv4 checksums. Source IPv4/UDP port and every payload byte are
+preserved. Packets that already fit retain the normal raw header behavior.
+`IP_HDRINCL` is not relied on to fragment automatically. The sender still uses a
+20-byte header, zero TOS and configurable TTL; Linux may fill allowed IP fields.
+Source `0.0.0.0` is rejected because the kernel would replace it.
+
+A bounded process-wide pool reserves 65535 nonzero IDs for 60 seconds, including
+failed/partial attempts. Exhaustion returns `backpressure` without waiting or
+retrying, limiting sustained **fragmented** replica attempts to roughly 1092/s
+across all targets in one process. This does not rate-limit unfragmented sends.
+The pool is process-local; other senders, process restarts, remote reassembly
+windows and external ID collisions cannot be coordinated by this daemon.
+
+One logical attempt per target may now contain several fragment syscalls. A send
+success is counted only if all are accepted. The first failure stops that target's
+attempt; already-sent fragments may expire remotely. No retry or truncation occurs,
+and other target workers continue independently. MTU changes during an attempt can
+still cause an error. Fragmentation increases sensitivity to loss/firewalls.
+
+In `udp_socket`, `auto` explicitly enables kernel fragmentation with
+`IP_MTU_DISCOVER=IP_PMTUDISC_DONT`; the origin remains the relay's. `drop` preserves
+the v0.1.0 UDP socket kernel policy rather than changing socket defaults. Input
+reassembly and output policy can be enabled separately. Neither setting modifies
+the original datagram's normal processing by Linux.
 
 ## Observability
 
@@ -221,6 +293,20 @@ Structured logs support JSON/text and debug/info/warn/error. Payload bytes are n
 
 `/healthz` reports successful service initialization, **not** delivery health for every remote destination. There is no built-in HTTP authentication/TLS; bind locally or protect externally.
 
+Additional v0.2.0 metrics:
+
+- `n_udptee_reassembly_events_total{event}`: `fragment`, `completed`, `duplicate`,
+  `suppressed`, `timeout`, `overlap`, `invalid`, `capacity`, `byte_limit`,
+  `fragment_limit`, `shutdown`.
+- `n_udptee_reassembly_contexts`, `n_udptee_reassembly_active_datagrams`,
+  `n_udptee_reassembly_buffered_bytes`: total contexts, pending contexts and
+  retained payload bytes. Rejection reasons also use `reassembly_` in the
+  existing dropped counter. `fragment` remains the disabled-path drop reason.
+- `n_udptee_raw_fragmentation_attempts_total{rule,target}` and
+  `n_udptee_raw_fragments_sent_total{rule,target}`: raw logical attempts needing
+  fragmentation and individual accepted fragment syscalls (including partial
+  attempts). Kernel-generated relay fragment counts are not estimated.
+
 ## systemd deployment
 
 Review [the example service unit](deploy/systemd/n-udptee.service), update its paths, and change the configuration before enabling the service:
@@ -254,13 +340,19 @@ Standard tests do not silently run privileged integration tests. `make integrati
 
 The GitHub Actions workflow builds/tests on native Linux amd64 and arm64 runners with libpcap/CGO. The recorded local execution in the report was on amd64; do not infer extra validation or production SLAs.
 
+The namespace suite also exercises a BER-encoded SNMPv2c trap, 65507-byte UDP
+payloads, two distinct output MTUs, independent checksum verification from PCAPs,
+reordered/duplicated/missing/conflicting fragments, resource exhaustion, timeout,
+failure isolation and disabled defaults. `make fuzz` runs both decoder and
+stateful reassembly fuzzers. These tests remain opt-in for privileged networking.
+
 ## Automated releases
 
 Push a stable version tag to run `.github/workflows/release.yaml`:
 
 ```sh
-git tag -a v0.1.0 -m "Release v0.1.0"
-git push origin v0.1.0
+git tag -a v0.2.0 -m "Release v0.2.0"
+git push origin v0.2.0
 ```
 
 The tag must match `vX.Y.Z` exactly, without leading zeros, prerelease suffixes,
@@ -293,7 +385,7 @@ A local tag alone does not trigger the workflow: push it to GitHub.
 | Nothing captured | Correct ingress interface, VLANs, BPF expression, actual inbound traffic |
 | Captured but not replicated | Original destination, port, CIDR matches, rule ordering |
 | Only one target loses packets | Its queue drops, send errors, route and remote firewall |
-| `mtu` errors | Route MTU vs. IPv4 + UDP + payload, no fragmentation |
+| `mtu` errors | Route MTU, output fragmentation policy and MTU changes during send |
 | Receiver sees a different source IP | NAT, anti-spoofing, reverse-path filtering, network policy |
 | Original gets duplicate packets | Remove it from targets and investigate external return paths |
 | `/metrics` or `/healthz` not reachable | Bind address, port collision, `metrics.enabled` |
@@ -302,7 +394,7 @@ A local tag alone does not trigger the workflow: push it to GitHub.
 
 **Supported:** passive Ethernet/VLAN ingress capture, Linux, UDP over IPv4, BPF filtering, static 1:N fan-out, raw source-IP-preserving transmission, ordinary UDP socket forwarding, Prometheus metrics, systemd.
 
-**Not supported:** TCP, IPv6, IP-fragment reassembly, application-level SNMP parsing, delivery acknowledgements, retries, disk spool, dynamic reload, distributed clustering, or more than one capture interface per process.
+**Not supported:** TCP, IPv6, application-level SNMP parsing, delivery acknowledgements, retries, disk spool, dynamic reload, distributed clustering, or more than one capture interface per process.
 
 The original UDP application remains independent from the replicator. **Successful forwarding means a send syscall accepted the packet; it does not prove the receiver application processed it.**
 
@@ -310,6 +402,7 @@ The original UDP application remains independent from the replicator. **Successf
 
 - [Português (Brasil): installation and operation](README.pt-BR.md)
 - [Technical specification](docs/N-UDPTEE-SPEC.md) (Portuguese)
+- [v0.2.0 fragmentation implementation and validation](docs/RELEASE-v0.2.0.md) (Portuguese)
 - [Implementation and validation report](docs/IMPLEMENTATION-REPORT.md) (Portuguese)
 - [Example configuration](configs/example.yaml)
 - [systemd service](deploy/systemd/n-udptee.service)

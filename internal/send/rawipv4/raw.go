@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/netip"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/nishisan-dev/n-udptee/internal/model"
 	"golang.org/x/sys/unix"
@@ -65,13 +67,19 @@ func Packet(d *model.Datagram, target netip.AddrPort, ttl int) ([]byte, error) {
 }
 
 type Sender struct {
-	mu     sync.Mutex
-	fd     int
-	target netip.AddrPort
-	ttl    int
+	fragment            bool
+	attempts, fragments atomic.Uint64
+	mu                  sync.Mutex
+	fd                  int
+	target              netip.AddrPort
+	ttl                 int
 }
 
-func New(target netip.AddrPort, ttl int) (*Sender, error) {
+func New(target netip.AddrPort, ttl int) (*Sender, error) { return newSender(target, ttl, false) }
+func NewFragmenting(target netip.AddrPort, ttl int) (*Sender, error) {
+	return newSender(target, ttl, true)
+}
+func newSender(target netip.AddrPort, ttl int, fragment bool) (*Sender, error) {
 	fd, e := unix.Socket(unix.AF_INET, unix.SOCK_RAW|unix.SOCK_CLOEXEC|unix.SOCK_NONBLOCK, unix.IPPROTO_RAW)
 	if e != nil {
 		return nil, fmt.Errorf("raw socket requires CAP_NET_RAW: %w", e)
@@ -80,7 +88,7 @@ func New(target netip.AddrPort, ttl int) (*Sender, error) {
 		unix.Close(fd)
 		return nil, e
 	}
-	return &Sender{fd: fd, target: target, ttl: ttl}, nil
+	return &Sender{fd: fd, target: target, ttl: ttl, fragment: fragment}, nil
 }
 func (s *Sender) Send(d *model.Datagram) error {
 	b, e := Packet(d, s.target, s.ttl)
@@ -92,7 +100,36 @@ func (s *Sender) Send(d *model.Datagram) error {
 	if s.fd < 0 {
 		return unix.EBADF
 	}
-	return unix.Sendto(s.fd, b, 0, &unix.SockaddrInet4{Addr: s.target.Addr().As4()})
+	address := &unix.SockaddrInet4{Addr: s.target.Addr().As4()}
+	if !s.fragment {
+		return unix.Sendto(s.fd, b, 0, address)
+	}
+	if e := unix.Connect(s.fd, address); e != nil {
+		return e
+	}
+	mtu, e := unix.GetsockoptInt(s.fd, unix.IPPROTO_IP, unix.IP_MTU)
+	if e != nil {
+		return e
+	}
+	if len(b) <= mtu {
+		return unix.Sendto(s.fd, b, 0, address)
+	}
+	s.attempts.Add(1)
+	id, e := fragmentIDs.next(time.Now())
+	if e != nil {
+		return e
+	}
+	parts, e := FragmentPacket(b, mtu, id)
+	if e != nil {
+		return e
+	}
+	return transmitFragments(parts, func(part []byte) error {
+		if err := unix.Sendto(s.fd, part, 0, address); err != nil {
+			return err
+		}
+		s.fragments.Add(1)
+		return nil
+	})
 }
 func (s *Sender) Close() error {
 	s.mu.Lock()
@@ -103,4 +140,16 @@ func (s *Sender) Close() error {
 	e := unix.Close(s.fd)
 	s.fd = -1
 	return e
+}
+
+// FragmentStats counts logical attempts requiring fragmentation and successful
+// fragment syscalls, including partial attempts that later fail.
+func (s *Sender) FragmentStats() (uint64, uint64) { return s.attempts.Load(), s.fragments.Load() }
+func transmitFragments(parts [][]byte, send func([]byte) error) error {
+	for _, part := range parts {
+		if err := send(part); err != nil {
+			return err
+		}
+	}
+	return nil
 }

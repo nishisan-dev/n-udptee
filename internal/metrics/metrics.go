@@ -10,6 +10,8 @@ import (
 
 type Metrics struct {
 	Registry                                                                               *prometheus.Registry
+	ReassemblyEvents, RawFragmentAttempts, RawFragments                                    *prometheus.CounterVec
+	ReassemblyContexts, ReassemblyActive, ReassemblyBytes                                  prometheus.Gauge
 	Packets, Bytes, Matched, Dropped, Enqueued, Success, Errors, QueueDropped, KernelDrops *prometheus.CounterVec
 	Depth                                                                                  *prometheus.GaugeVec
 }
@@ -30,6 +32,17 @@ func New() *Metrics {
 	m.Errors = counter("replicas_send_errors_total", "rule", "target", "reason")
 	m.QueueDropped = counter("replicas_queue_dropped_total", "rule", "target")
 	m.KernelDrops = counter("pcap_kernel_drops_total", "interface")
+	m.ReassemblyEvents = counter("reassembly_events_total", "event")
+	m.RawFragmentAttempts = counter("raw_fragmentation_attempts_total", "rule", "target")
+	m.RawFragments = counter("raw_fragments_sent_total", "rule", "target")
+	gauge := func(name string) prometheus.Gauge {
+		g := prometheus.NewGauge(prometheus.GaugeOpts{Name: "n_udptee_" + name, Help: name})
+		m.Registry.MustRegister(g)
+		return g
+	}
+	m.ReassemblyContexts = gauge("reassembly_contexts")
+	m.ReassemblyActive = gauge("reassembly_active_datagrams")
+	m.ReassemblyBytes = gauge("reassembly_buffered_bytes")
 	m.Depth = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "n_udptee_target_queue_depth", Help: "Queued replicas awaiting a send attempt"}, []string{"target"})
 	m.Registry.MustRegister(m.Depth, prometheus.NewGoCollector(), prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
 	return m

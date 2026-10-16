@@ -15,7 +15,7 @@ import (
 	"github.com/nishisan-dev/n-udptee/internal/config"
 )
 
-var version = "0.1.0"
+var version = "0.2.0"
 var commit = "unknown"
 var buildTime = "unknown"
 
@@ -54,6 +54,9 @@ func execute(args []string, out, errOut io.Writer) error {
 	}
 	if args[0] == "check" {
 		fmt.Fprintln(out, "configuration valid (offline Ethernet BPF); interface and ingress validated at run")
+		if c.Reassembly.Enabled {
+			fmt.Fprintln(out, "reassembly enabled: BPF must capture every UDP fragment; use ip proto 17 with address filters, and match ports in rules")
+		}
 		return nil
 	}
 	var level slog.Level

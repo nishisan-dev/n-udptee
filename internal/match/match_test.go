@@ -30,3 +30,11 @@ func TestFirstRule(t *testing.T) {
 		t.Fatal("destination mismatch")
 	}
 }
+
+func TestFragmentAddressPrefilter(t *testing.T) {
+	r := config.Rule{Match: config.Match{Sources: []string{"192.0.2.0/24"}, Destinations: []string{"198.51.100.0/24"}, Ports: []int{162}}}
+	m := New([]config.Rule{r})
+	if !m.MayMatchAddresses(netip.MustParseAddr("192.0.2.1"), netip.MustParseAddr("198.51.100.1")) || m.MayMatchAddresses(netip.MustParseAddr("203.0.113.1"), netip.MustParseAddr("198.51.100.1")) {
+		t.Fatal("incorrect fragment prefilter")
+	}
+}

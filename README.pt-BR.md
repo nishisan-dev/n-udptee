@@ -134,8 +134,9 @@ ID, TTL ou DSCP/ECN. Origem `0.0.0.0` em raw gera erro de envio: o kernel
 substituiria esse endereço com `IP_HDRINCL`, impedindo sua preservação. `IP_HDRINCL` permite ao Linux preencher comprimento,
 checksum e ID zero. O roteamento e ARP são do kernel.
 
-Pacotes acima da MTU da rota podem falhar com `EMSGSIZE`: não há truncamento,
-fragmentação manual ou retry. Entradas IPv4 com MF ou offset são descartadas.
+Por padrão, pacotes acima da MTU podem falhar com `EMSGSIZE`, sem fragmentação
+raw ou retry, e entradas fragmentadas são descartadas. A v0.2.0 adiciona as opções
+independentes de remontagem e fragmentação descritas abaixo.
 Um BPF `udp` pode ocultar fragmentos não iniciais; a métrica conta somente os
 fragmentos efetivamente observados. O decoder valida estrutura e comprimentos;
 não usa checksums de entrada como condição de aceitação, pois offload pode
@@ -147,6 +148,83 @@ dessas políticas. Capture no destino para confirmar a transparência real.
 Captura ingress evita recapturar a própria saída na interface monitorada;
 loops que atravessam e retornam por equipamentos externos devem ser evitados
 pela topologia e BPF. O programa não adiciona identificador ao payload.
+
+## Fragmentação opcional — v0.2.0
+
+Traps SNMP continuam sendo bytes UDP opacos; não há parsing ou transformação.
+Adapte o exemplo completo `configs/fragments.yaml` ou incorpore estes campos:
+
+```yaml
+capture:
+  bpf: "ip proto 17 and dst host 192.0.2.10"
+  snaplen: 262144
+reassembly:
+  enabled: true
+  timeout_seconds: 30
+  max_datagrams: 1024
+  max_bytes: 33554432
+  max_fragments_per_datagram: 128
+replication:
+  mode: raw_ipv4
+  fragmentation: auto  # drop (padrão) | auto
+```
+
+Os padrões continuam `reassembly.enabled: false` e `fragmentation: drop`. As
+opções são independentes: remontar uma trap grande não basta se o novo pacote
+exceder a MTU de saída. No modo raw, `auto` consulta a MTU da rota por destino e
+cria fragmentos com IP/porta de origem preservados, ID comum não zero, offsets/MF
+corretos e checksums IPv4 individuais; o checksum UDP é do datagrama completo.
+No modo relay, `auto` permite ao kernel fragmentar via `IP_PMTUDISC_DONT`.
+`drop` mantém a política anterior de cada sender, incluindo os defaults do
+socket UDP. Não se depende de fragmentação automática com `IP_HDRINCL`.
+
+A remontagem isola interface, pilha VLAN, IPs e ID IPv4 (UDP somente). Aceita
+ordem arbitrária e duplicatas exatas. Descarta contextos com sobreposição parcial,
+duplicatas conflitantes, DF+fragmentação, comprimentos inconsistentes, UDP inválido
+ou fragmentos intermediários sem alinhamento de oito bytes. Só o datagrama
+completo entra no matcher/fan-out; CIDRs de origem/destino filtram antes da retenção,
+e a porta é aplicada depois da remontagem. O original segue pela pilha normalmente.
+
+O timeout conta desde a primeira chegada em relógio monotônico e não é renovado
+por duplicatas. A limpeza ocorre inclusive na captura ociosa e no shutdown.
+Limites aceitos: timeout 1–60 s, contextos 1–65536, bytes 65535–268435456 e fragmentos
+únicos por contexto 2–8192. Valores do YAML são defaults, exceto `enabled`.
+O orçamento de bytes cobre payloads de fragmentos retidos; há memória adicional
+para metadados, cópias de conclusão, filas, sockets e GC. Contextos completos ou
+rejeitados permanecem como tombstones até o prazo original, sem payload, para
+suprimir duplicatas tardias. Eles também contam no limite de contextos e podem
+limitar novos IDs por janela de timeout; reutilização legítima do mesmo ID/chave
+nessa janela também é suprimida. Tráfego não fragmentado não usa esse cache.
+
+BPF por porta pode perder os fragmentos seguintes. Use `ip proto 17` com filtros
+de endereço e aplique portas nas regras; o programa não amplia o BPF silenciosamente.
+`check` e inicialização explicam esse requisito. Snaplen 262144 é recomendado.
+
+Cada tentativa lógica por destino pode envolver várias syscalls. Sucesso exige
+aceitação de todos os fragmentos. O primeiro erro encerra aquela tentativa sem
+retry; fragmentos já enviados podem expirar no receptor. Outros destinos continuam
+independentes. Mudanças de MTU, perda e filtros de rede ainda podem impedir entrega.
+
+A saída raw reserva até 65535 IDs por 60 s em um pool global ao processo, inclusive
+para tentativas parciais/falhas. Esgotamento gera `backpressure`, sem espera/retry:
+limite aproximado de 1092 tentativas fragmentadas/s somando targets. Datagramas
+não fragmentados não usam o pool. Não é possível coordenar IDs de outros emissores,
+reinícios do processo ou janelas de remontagem dos receptores remotos.
+
+Métricas novas: `n_udptee_reassembly_events_total{event}` com `fragment`, `completed`,
+`duplicate`, `suppressed`, `timeout`, `overlap`, `invalid`, `capacity`, `byte_limit`,
+`fragment_limit`, `shutdown`; gauges `n_udptee_reassembly_contexts`,
+`n_udptee_reassembly_active_datagrams`, `n_udptee_reassembly_buffered_bytes`.
+Descartes usam também motivos `reassembly_*` no contador existente.
+`n_udptee_raw_fragmentation_attempts_total{rule,target}` conta tentativas raw que
+precisaram fragmentar e `n_udptee_raw_fragments_sent_total{rule,target}` conta
+syscalls de fragmentos aceitas, incluindo tentativas parciais. Não se inventa
+contagem de fragmentos gerados internamente pelo kernel no relay.
+
+A integração verifica trap SNMPv2c em BER, payload máximo de 65507 bytes, MTUs
+diferentes, checksums independentes nos PCAPs, ordem/duplicação, ausência/overlap,
+limites, expiração, isolamento de falha e padrões desabilitados. `make fuzz` cobre
+decoder e remontagem. Os testes de rede continuam opt-in e isolados em namespaces.
 
 ## Operação e métricas
 
@@ -257,8 +335,8 @@ race/fuzz e o laboratório. Não presume cross-compilation CGO trivial.
 Envie uma tag SemVer estável para disparar `.github/workflows/release.yaml`:
 
 ```sh
-git tag -a v0.1.0 -m "Release v0.1.0"
-git push origin v0.1.0
+git tag -a v0.2.0 -m "Release v0.2.0"
+git push origin v0.2.0
 ```
 
 O workflow exige exatamente `vX.Y.Z`, sem zeros iniciais, sufixos ou build metadata.
@@ -280,7 +358,7 @@ menor, conta como mais recente. O fluxo usa `GITHUB_TOKEN` com escrita apenas no
 job de publicação, sem PAT adicional. Criar a tag apenas localmente não dispara
 o workflow; é necessário enviá-la ao GitHub.
 
-## Troubleshooting e limites da v0.1.0
+## Troubleshooting e limites da v0.2.0
 
 | Sintoma | Verificação |
 |---|---|
@@ -290,13 +368,13 @@ o workflow; é necessário enviá-la ao GitHub.
 | Não captura | Interface, VLAN, direção, BPF e fluxo chegando realmente ao host |
 | Captura sem match | CIDRs/porta, ordem das regras e destino original |
 | Apenas um target perde | Drops daquela fila, erro de envio, rota/firewall remoto |
-| `mtu` nos erros | MTU da rota menor que IPv4+UDP+payload; não há fragmentação |
+| `mtu` nos erros | MTU da rota, opção de fragmentação e mudanças de MTU durante envio |
 | Origem muda ou nada chega em raw | NAT, antispoofing, rp_filter e roteamento |
 | Original duplicado | Remova-o dos targets e verifique caminhos externos de retorno |
 | HTTP não abre | Endereço ocupado, listen inválido ou `metrics.enabled: false` |
 
 IPv4/UDP e Ethernet/VLAN somente; até duas tags VLAN. Sem TCP, IPv6,
-reassemblagem, parsing SNMP, reload, disco, eleição de líder ou administração
+parsing SNMP, reload, disco, eleição de líder ou administração
 remota. Uma interface por processo. Nenhuma garantia de entrega UDP.
 
 A compilação offline usa diretamente `pcap_open_dead`/`pcap_compile`/`pcap_close`
@@ -305,3 +383,5 @@ libpcap 1.10.1. A captura em execução usa `github.com/gopacket/gopacket/pcap`.
 
 Licença ainda não escolhida pelo autor; nenhum arquivo de licença foi presumido.
 A especificação original está em `docs/N-UDPTEE-SPEC.md`.
+
+Relatório da v0.2.0 e evidências: [docs/RELEASE-v0.2.0.md](docs/RELEASE-v0.2.0.md).

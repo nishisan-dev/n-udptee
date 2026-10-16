@@ -17,6 +17,7 @@ import (
 	"github.com/nishisan-dev/n-udptee/internal/decode"
 	"github.com/nishisan-dev/n-udptee/internal/engine"
 	"github.com/nishisan-dev/n-udptee/internal/metrics"
+	"github.com/nishisan-dev/n-udptee/internal/reassembly"
 	"github.com/nishisan-dev/n-udptee/internal/send/rawipv4"
 	"github.com/nishisan-dev/n-udptee/internal/send/udpsocket"
 )
@@ -66,18 +67,32 @@ func Run(ctx context.Context, c config.Config, log *slog.Logger) error {
 	en, e := engine.New(c, m, log, func(t config.Target) (engine.Sender, error) {
 		a := netip.AddrPortFrom(netip.MustParseAddr(t.IP), uint16(t.Port))
 		if c.Replication.Mode == "raw_ipv4" {
+			if c.Replication.Fragmentation == "auto" {
+				return rawipv4.NewFragmenting(a, c.Replication.TTL)
+			}
 			return rawipv4.New(a, c.Replication.TTL)
+		}
+		if c.Replication.Fragmentation == "auto" {
+			return udpsocket.NewFragmenting(a)
 		}
 		return udpsocket.New(a)
 	})
 	if e != nil {
 		return e
 	}
+	var assembler *reassembly.Reassembler
+	if c.Reassembly.Enabled {
+		assembler = reassembly.New(c.Reassembly, m)
+		log.Info("IPv4 reassembly enabled; BPF must include non-initial UDP fragments", "timeout_seconds", c.Reassembly.TimeoutSeconds)
+	}
 	var healthy atomic.Bool
 	var server *http.Server
 	httpErr := make(chan error, 1)
 	defer func() {
 		healthy.Store(false)
+		if assembler != nil {
+			assembler.Close()
+		}
 		stop, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		en.Shutdown(stop)
@@ -137,6 +152,9 @@ func Run(ctx context.Context, c config.Config, log *slog.Logger) error {
 			stats()
 			lastStats = time.Now()
 		}
+		if assembler != nil {
+			assembler.Tick(time.Now())
+		}
 		if err == pcap.NextErrorTimeoutExpired {
 			continue
 		}
@@ -149,7 +167,26 @@ func Run(ctx context.Context, c config.Config, log *slog.Logger) error {
 			m.Dropped.WithLabelValues("truncated").Inc()
 			continue
 		}
-		d, err := decode.Decode(b, c.Capture.Interface, ci.Timestamp)
+		p, err := decode.ParseIPv4Frame(b, c.Capture.Interface, ci.Timestamp)
+		if err != nil {
+			m.Dropped.WithLabelValues(err.Error()).Inc()
+			continue
+		}
+		if p.Fragmented() {
+			if assembler == nil {
+				m.Dropped.WithLabelValues("fragment").Inc()
+				continue
+			}
+			if !en.MayMatchAddresses(p.Source, p.Destination) {
+				m.Dropped.WithLabelValues("unmatched").Inc()
+				continue
+			}
+			if d := assembler.Push(p, time.Now()); d != nil {
+				en.Submit(d)
+			}
+			continue
+		}
+		d, err := decode.UDP(p, p.Payload)
 		if err != nil {
 			m.Dropped.WithLabelValues(err.Error()).Inc()
 			continue

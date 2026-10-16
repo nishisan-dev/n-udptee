@@ -6,7 +6,10 @@ capture:
   promiscuous: false
   snaplen: 65535
   buffer_size_bytes: 33554432
+reassembly:
+  enabled: false
 replication:
+  fragmentation: drop
   mode: raw_ipv4
   ttl: 64
   queue_size_per_target: 4096

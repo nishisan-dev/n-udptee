@@ -1,0 +1,63 @@
+go vet ./...
+go test ./...
+ok  	github.com/nishisan-dev/n-udptee/cmd/n-udptee	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/app	(cached)
+?   	github.com/nishisan-dev/n-udptee/internal/bpf	[no test files]
+ok  	github.com/nishisan-dev/n-udptee/internal/capture	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/config	0.015s
+ok  	github.com/nishisan-dev/n-udptee/internal/decode	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/engine	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/match	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/metrics	(cached)
+?   	github.com/nishisan-dev/n-udptee/internal/model	[no test files]
+ok  	github.com/nishisan-dev/n-udptee/internal/reassembly	0.013s
+ok  	github.com/nishisan-dev/n-udptee/internal/send/rawipv4	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/send/udpsocket	(cached)
+ok  	github.com/nishisan-dev/n-udptee/tests/integration	(cached)
+python3 -m unittest discover -s tests/release -v
+test_existing_draft_resumes_upload (test_publish.PublishTest) ... ok
+test_failed_upload_does_not_publish (test_publish.PublishTest) ... ok
+test_incomplete_published_release_fails_without_mutating (test_publish.PublishTest) ... ok
+test_new_release_publishes_only_after_upload (test_publish.PublishTest) ... ok
+test_published_release_is_not_overwritten (test_publish.PublishTest) ... ok
+test_api_failure_stops_cleanup (test_retention.RetentionTest) ... ok
+test_concurrent_404_is_safe_but_403_fails (test_retention.RetentionTest) ... Deleting release v1.0.1 (keeping Git tag)
+Retention complete: 1 expired releases processed.
+Deleting release v1.0.1 (keeping Git tag)
+ok
+test_deterministic_ties_and_invalid_metadata (test_retention.RetentionTest) ... ok
+test_do_not_delete_when_under_limit (test_retention.RetentionTest) ... ok
+test_exact_stable_tag (test_retention.RetentionTest) ... ok
+test_keep_five_by_publication_not_version_or_input_order (test_retention.RetentionTest) ... ok
+test_pagination_and_delete_only_release_not_tag (test_retention.RetentionTest) ... Deleting release v1.0.2 (keeping Git tag)
+Deleting release v1.0.1 (keeping Git tag)
+ok
+test_preserve_drafts_prereleases_and_other_tags (test_retention.RetentionTest) ... ok
+
+----------------------------------------------------------------------
+Ran 13 tests in 0.444s
+
+OK
+Retention complete: 2 expired releases processed.
+go test -race ./...
+ok  	github.com/nishisan-dev/n-udptee/cmd/n-udptee	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/app	(cached)
+?   	github.com/nishisan-dev/n-udptee/internal/bpf	[no test files]
+ok  	github.com/nishisan-dev/n-udptee/internal/capture	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/config	1.090s
+ok  	github.com/nishisan-dev/n-udptee/internal/decode	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/engine	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/match	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/metrics	(cached)
+?   	github.com/nishisan-dev/n-udptee/internal/model	[no test files]
+ok  	github.com/nishisan-dev/n-udptee/internal/reassembly	1.057s
+ok  	github.com/nishisan-dev/n-udptee/internal/send/rawipv4	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/send/udpsocket	(cached)
+ok  	github.com/nishisan-dev/n-udptee/tests/integration	(cached)
+mkdir -p build
+CGO_ENABLED=1 go build -ldflags '-X main.version=0.2.0 -X main.commit=3d5af9c -X main.buildTime=2026-10-16T14:04:04Z' -o build/n-udptee ./cmd/n-udptee
+./build/n-udptee check --config configs/example.yaml
+configuration valid (offline Ethernet BPF); interface and ingress validated at run
+./build/n-udptee check --config configs/fragments.yaml
+configuration valid (offline Ethernet BPF); interface and ingress validated at run
+reassembly enabled: BPF must capture every UDP fragment; use ip proto 17 with address filters, and match ports in rules

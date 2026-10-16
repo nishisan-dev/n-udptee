@@ -156,3 +156,28 @@ type discard struct{}
 
 func (discard) Send(*model.Datagram) error { return nil }
 func (discard) Close() error               { return nil }
+
+type partialFragments struct{ attempts, fragments uint64 }
+
+func (p *partialFragments) Send(*model.Datagram) error {
+	p.attempts++
+	p.fragments += 2
+	return unix.ENETUNREACH
+}
+func (p *partialFragments) Close() error                    { return nil }
+func (p *partialFragments) FragmentStats() (uint64, uint64) { return p.attempts, p.fragments }
+func TestPartialFragmentAccounting(t *testing.T) {
+	c := cfg()
+	c.Rules[0].Targets = c.Rules[0].Targets[:1]
+	m := metrics.New()
+	p := &partialFragments{}
+	e, err := New(c, m, slog.New(slog.NewTextHandler(io.Discard, nil)), func(config.Target) (Sender, error) { return p, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.Submit(datagram())
+	e.Shutdown(context.Background())
+	if testutil.ToFloat64(m.RawFragmentAttempts.WithLabelValues("r", "a")) != 1 || testutil.ToFloat64(m.RawFragments.WithLabelValues("r", "a")) != 2 || testutil.ToFloat64(m.Errors.WithLabelValues("r", "a", "unreachable")) != 1 || testutil.ToFloat64(m.Success.WithLabelValues("r", "a")) != 0 {
+		t.Fatal("partial fragment attempt counted as a successful datagram")
+	}
+}

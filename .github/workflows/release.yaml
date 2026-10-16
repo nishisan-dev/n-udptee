@@ -51,7 +51,7 @@ jobs:
           package="n-udptee_${RELEASE_TAG}_linux_${ARCH}"
           mkdir -p "build/${package}/configs" "build/${package}/deploy/systemd" dist
           cp build/n-udptee README.md README.pt-BR.md "build/${package}/"
-          cp configs/example.yaml "build/${package}/configs/"
+          cp configs/*.yaml "build/${package}/configs/"
           cp deploy/systemd/n-udptee.service "build/${package}/deploy/systemd/"
           tar -C build -czf "dist/${package}.tar.gz" "${package}"
       - uses: actions/upload-artifact@v7.0.2

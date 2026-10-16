@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import re
 import signal
+import struct
+import math
 import socket
 import subprocess as sp
 import sys
@@ -15,6 +17,98 @@ import time
 import urllib.request
 
 HERE = Path(__file__).resolve()
+
+
+def checksum(data):
+    if len(data) % 2:
+        data += b'\x00'
+    total = sum(struct.unpack('!' + str(len(data) // 2) + 'H', data))
+    while total >> 16:
+        total = (total & 65535) + (total >> 16)
+    return (~total) & 65535
+
+
+def trap_payload(size=5000):
+    # Real BER-encoded SNMPv2c Trap-PDU; only the test transmitter knows SNMP.
+    def tlv(tag, data):
+        length = len(data)
+        encoded = bytes([length]) if length < 128 else b'\x82' + struct.pack('!H', length)
+        return bytes([tag]) + encoded + data
+    oid = lambda value: tlv(6, bytes.fromhex(value))
+    varbind = lambda name, value: tlv(0x30, oid(name) + value)
+    variables = varbind('2b06010201010300', tlv(0x43, b'\x01'))
+    variables += varbind('2b060106030101040100', oid('2b0601060301010501'))
+    variables += varbind('2b06010201010100', tlv(4, b'n-udptee fragmented SNMP trap '.ljust(size, b'x')))
+    pdu = tlv(0xa7, tlv(2, b'\x01') + tlv(2, b'\x00') + tlv(2, b'\x00') + tlv(0x30, variables))
+    return tlv(0x30, tlv(2, b'\x01') + tlv(4, b'public') + pdu)
+
+
+def inject_fragments(encoded, identification, arrangement, port):
+    payload = base64.b64decode(encoded)
+    source = socket.inet_aton('10.10.0.2')
+    destination = socket.inet_aton('10.10.0.1')
+    udp = struct.pack('!HHHH', 40000, int(port), len(payload) + 8, 0) + payload
+    pseudo = source + destination + struct.pack('!BBH', 0, 17, len(udp))
+    udp = udp[:6] + struct.pack('!H', checksum(pseudo + udp) or 65535) + udp[8:]
+    chunk = 1176
+    packets = []
+    def packet(offset, data, more, ident):
+        flags = offset // 8 | (0x2000 if more else 0)
+        header = struct.pack('!BBHHHBBH4s4s', 0x45, 0, 20 + len(data), ident, flags, 64, 17, 0, source, destination)
+        header = header[:10] + struct.pack('!H', checksum(header)) + header[12:]
+        return header + data
+    for offset in range(0, len(udp), chunk):
+        data = udp[offset:offset + chunk]
+        packets.append(packet(offset, data, offset + len(data) < len(udp), int(identification)))
+    if arrangement == 'reverse-duplicate':
+        packets.reverse()
+        packets.insert(1, packets[0])
+    elif arrangement == 'missing':
+        del packets[1]
+    elif arrangement == 'overlap':
+        conflict = bytes([udp[8] ^ 255]) + udp[9:8 + chunk]
+        packets.insert(1, packet(8, conflict, True, int(identification)))
+    elif arrangement == 'flood':
+        packets = [packet(0, udp[:chunk], True, int(identification) + i) for i in range(100)]
+    s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
+    s.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
+    for p in packets:
+        s.sendto(p, ('10.10.0.1', 0))
+
+
+def verify_fragment_pcap(path, payload, mtu, source_ip):
+    data = path.read_bytes()
+    endian = '<' if data[:4] == b'\xd4\xc3\xb2\xa1' else '>'
+    assert data[:4] in [b'\xd4\xc3\xb2\xa1', b'\xa1\xb2\xc3\xd4'], 'invalid PCAP'
+    offset = 24
+    pieces = []
+    ids = set()
+    src = dst = None
+    while offset < len(data):
+        _, _, captured, wire = struct.unpack_from(endian + 'IIII', data, offset)
+        frame = data[offset + 16:offset + 16 + captured]
+        assert captured == wire
+        ip = frame[14:]
+        ihl = (ip[0] & 15) * 4
+        total, ident, flags = struct.unpack_from('!HHH', ip, 2)
+        assert total <= mtu and checksum(ip[:ihl]) == 0, 'MTU/header checksum'
+        assert not flags & 0x4000, 'DF set on fragment'
+        assert socket.inet_ntoa(ip[12:16]) == source_ip
+        src, dst = ip[12:16], ip[16:20]
+        ids.add(ident)
+        pieces.append(((flags & 0x1fff) * 8, bool(flags & 0x2000), ip[ihl:total]))
+        offset += 16 + captured
+    assert len(ids) == 1 and next(iter(ids)) != 0
+    pieces.sort()
+    udp = b''
+    for i, (start, more, part) in enumerate(pieces):
+        assert start == len(udp) and more == (i < len(pieces) - 1)
+        assert not more or len(part) % 8 == 0
+        udp += part
+    assert udp[8:] == payload and struct.unpack_from('!H', udp, 4)[0] == len(udp)
+    assert checksum(src + dst + struct.pack('!BBH', 0, 17, len(udp)) + udp) == 0, 'UDP checksum'
+    if source_ip == '10.10.0.2':
+        assert struct.unpack_from('!H', udp)[0] == 40000
 
 
 def helper():
@@ -40,6 +134,8 @@ def helper():
             s.sendto(p, (destination, int(port)))
             if float(interval):
                 time.sleep(float(interval))
+    elif mode == 'send-fragments':
+        inject_fragments(*sys.argv[2:])
     elif mode == 'http':
         with urllib.request.urlopen(sys.argv[2], timeout=2) as r:
             print(r.read().decode(), end='')
@@ -118,8 +214,10 @@ class Lab:
         p = self.out / (key + '.jsonl')
         return [json.loads(x) for x in p.read_text().splitlines()] if p.exists() else []
 
-    def start(self, mode, b_port=162):
+    def start(self, mode, b_port=162, reassembly=False, fragmentation="drop"):
         label = mode if b_port == 162 else mode + '-port-rewrite'
+        if reassembly or fragmentation == 'auto':
+            label += '-reassembly-' + str(reassembly).lower() + '-' + fragmentation
         conf = self.out / (label + '.yaml')
         conf.write_text('''version: 1
 capture:
@@ -139,7 +237,10 @@ rules:
       - {name: b, ip: 10.10.0.21, port: 162}
 metrics:
   listen: "127.0.0.1:19109"
-'''.replace('MODE', mode).replace('name: b, ip: 10.10.0.21, port: 162', 'name: b, ip: 10.10.0.21, port: ' + str(b_port)))
+'''.replace('MODE', mode).replace('name: b, ip: 10.10.0.21, port: 162', 'name: b, ip: 10.10.0.21, port: ' + str(b_port))
+          .replace('  mode: ' + mode, '  mode: ' + mode + '\n  fragmentation: ' + fragmentation)
+          .replace('  bpf: "ip and udp"', '  bpf: "ip proto 17"\n  snaplen: 262144')
+          + ('reassembly:\n  enabled: true\n  timeout_seconds: 1\n  max_datagrams: 64\n  max_bytes: 65535\n  max_fragments_per_datagram: 128\n' if reassembly else ''))
         log = open(self.out / (label + '.log'), 'w')
         self.daemon = self.popen('rep', self.binary, 'run', '-c', str(conf), stdout=log, stderr=log)
         def ready():
@@ -272,6 +373,116 @@ metrics:
         self.stop()
         print('PASS raw_ipv4 destination port rewrite', flush=True)
 
+    def send_fragments(self, payload, identification, arrangement='ordered', port=162):
+        self.ns('source', sys.executable, str(HERE), 'send-fragments', base64.b64encode(payload).decode(), str(identification), arrangement, str(port))
+
+    def check_fragment_delivery(self, payload, identification, mode, arrangement='ordered'):
+        before = {key: len(self.rows(key)) for key in ['rep', 'a', 'b']}
+        self.send_fragments(payload, identification, arrangement)
+        wait(lambda: all(len(self.rows(key)) == before[key] + 1 for key in before), 'fragmented datagram delivery')
+        time.sleep(.1)
+        for key in before:
+            rows = self.rows(key)
+            assert len(rows) == before[key] + 1, ('fragment duplicated', key)
+            assert base64.b64decode(rows[-1]['payload']) == payload
+            expected = '10.10.0.2' if key == 'rep' or mode == 'raw_ipv4' else '10.10.0.1'
+            assert rows[-1]['source'][0] == expected
+            if expected == '10.10.0.2':
+                assert rows[-1]['source'][1] == 40000
+
+    def fragmentation_defaults(self):
+        payload = trap_payload()
+        self.start('raw_ipv4')
+        before = {key: len(self.rows(key)) for key in ['rep', 'a', 'b']}
+        self.send_fragments(payload, 100)
+        wait(lambda: len(self.rows('rep')) == before['rep'] + 1, 'original fragmented default')
+        time.sleep(.15)
+        assert all(len(self.rows(key)) == before[key] for key in ['a', 'b'])
+        assert self.metric('packets_dropped_total', reason='fragment') >= 1
+        self.stop()
+        self.start('raw_ipv4', reassembly=True)
+        before = {key: len(self.rows(key)) for key in ['rep', 'a', 'b']}
+        self.send_fragments(payload, 101)
+        wait(lambda: self.metric('replicas_send_errors_total', reason='mtu') == 2, 'reassembly without output fragmentation')
+        assert self.metric('reassembly_events_total', event='completed') == 1
+        assert all(len(self.rows(key)) == before[key] for key in ['a', 'b'])
+        assert len(self.rows('rep')) == before['rep'] + 1
+        self.stop()
+        print('PASS fragmented defaults and independent reassembly option', flush=True)
+
+    def fragmented(self, mode):
+        self.ns('rep', 'ip', 'route', 'add', '10.10.0.20/32', 'dev', 'rep0', 'mtu', '1200')
+        self.ns('rep', 'ip', 'route', 'add', '10.10.0.21/32', 'dev', 'rep0', 'mtu', '1400')
+        try:
+            if mode == 'raw_ipv4':
+                self.start(mode, fragmentation='auto')
+                self.assert_delivery(b'fits with auto', mode)
+                assert self.metric('raw_fragmentation_attempts_total') == 0
+                self.assert_delivery(b'fragment-output-only' * 70, mode)
+                assert self.metric('raw_fragmentation_attempts_total', target='a') == 1
+                self.stop()
+            self.start(mode, reassembly=True, fragmentation='auto')
+            payload = trap_payload()
+            capture_dir = tempfile.TemporaryDirectory(prefix='n-udptee-fragments-')
+            recorders = []
+            for key, mtu in [('a', 1200), ('b', 1400)]:
+                path = Path(capture_dir.name) / (key + '.pcap')
+                count = math.ceil((len(payload) + 8) / ((mtu - 20) // 8 * 8))
+                p = self.popen(key, 'tcpdump', '-c', str(count), '-U', '-nn', '-i', key + '0', '-w', str(path), 'ip proto 17', stdout=sp.DEVNULL, stderr=sp.PIPE)
+                recorders.append((p, path, key, mtu))
+            time.sleep(.2)
+            self.check_fragment_delivery(payload, 200, mode, 'reverse-duplicate')
+            for p, path, key, mtu in recorders:
+                assert p.wait(timeout=3) == 0, p.stderr.read().decode()
+                verify_fragment_pcap(path, payload, mtu, '10.10.0.2' if mode == 'raw_ipv4' else '10.10.0.1')
+                (self.out / (mode + '-fragments-' + key + '.pcap')).write_bytes(path.read_bytes())
+                decoded = self.cmd('tcpdump', '-nn', '-vvv', '-r', str(path))
+                (self.out / (mode + '-fragments-' + key + '.txt')).write_text(decoded)
+            capture_dir.cleanup()
+            self.check_fragment_delivery(bytes(range(256)) * 20, 201, mode)
+            self.check_fragment_delivery(b'Z' * 65507, 204, mode)
+            assert self.metric('reassembly_events_total', event='completed') == 3
+            assert self.metric('reassembly_events_total', event='duplicate') >= 1
+            assert self.metric('packets_matched_total') == 3
+            before = {key: len(self.rows(key)) for key in ['rep', 'a', 'b']}
+            self.send_fragments(payload, 202, 'missing')
+            wait(lambda: self.metric('reassembly_events_total', event='timeout') >= 1, 'idle reassembly timeout')
+            assert all(len(self.rows(key)) == before[key] for key in before), 'partial datagram emitted'
+            self.send_fragments(payload, 203, 'overlap')
+            wait(lambda: self.metric('reassembly_events_total', event='overlap') >= 1, 'overlap rejection')
+            assert all(len(self.rows(key)) == before[key] for key in ['a', 'b'])
+            self.send_fragments(payload, 205, port=163)
+            time.sleep(.1)
+            assert all(len(self.rows(key)) == before[key] for key in ['a', 'b']), 'unmatched port copied'
+            rss = self.rss()
+            self.send_fragments(payload, 500, 'flood')
+            assert self.metric('reassembly_events_total', event='capacity') > 0
+            assert self.metric('reassembly_events_total', event='byte_limit') > 0
+            assert self.metric('reassembly_buffered_bytes') <= 65535
+            assert self.metric('reassembly_contexts') <= 64
+            wait(lambda: self.metric('reassembly_contexts') == 0, 'bounded context expiry')
+            assert self.metric('reassembly_active_datagrams') == 0 and self.metric('reassembly_buffered_bytes') == 0
+            assert self.rss() - rss < 32 * 1024 * 1024
+            matched = self.metric('packets_matched_total')
+            time.sleep(.1)
+            assert self.metric('packets_matched_total') == matched == 3, 'fragment replication loop'
+            assert self.ns('rep', sys.executable, str(HERE), 'http', 'http://127.0.0.1:19109/healthz') == 'ok\n'
+            # Fragmented jobs still preserve isolation when one route fails.
+            self.ns('rep', 'ip', 'route', 'del', '10.10.0.20/32')
+            self.ns('rep', 'ip', 'route', 'add', 'unreachable', '10.10.0.20/32')
+            n = len(self.rows('b'))
+            self.send_fragments(payload, 700)
+            wait(lambda: len(self.rows('b')) == n + 1, 'fragmented B delivery while A fails')
+            assert self.metric('replicas_send_errors_total', target='a') >= 1
+            self.ns('rep', 'ip', 'route', 'del', 'unreachable', '10.10.0.20/32')
+            self.send_fragments(payload, 701, 'missing')
+            wait(lambda: self.metric('reassembly_active_datagrams') >= 1, 'pending datagram before shutdown')
+            self.metrics()
+            self.stop()
+            print('PASS', mode, 'fragmented SNMP trap/binary/max payload, independent MTUs/checksums, out-of-order/duplicate, missing/overlap, bounds, failure isolation and shutdown', flush=True)
+        finally:
+            self.ns('rep', 'ip', 'route', 'del', '10.10.0.21/32')
+
     def rss(self):
         for line in Path('/proc/' + str(self.daemon.pid) + '/status').read_text().splitlines():
             if line.startswith('VmRSS:'):
@@ -349,12 +560,15 @@ def main():
             lab.functional('raw_ipv4')
             lab.functional('udp_socket')
             lab.port_rewrite()
+            lab.fragmentation_defaults()
+            lab.fragmented('raw_ipv4')
+            lab.fragmented('udp_socket')
     finally:
         lab.close()
 
 
 if __name__ == '__main__':
-    if len(sys.argv) > 1 and sys.argv[1] in ['receive', 'send', 'http', 'tcp']:
+    if len(sys.argv) > 1 and sys.argv[1] in ['receive', 'send', 'send-fragments', 'http', 'tcp']:
         helper()
     else:
         main()

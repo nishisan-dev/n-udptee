@@ -1,0 +1,36 @@
+version: 1
+capture:
+  interface: eth0
+  # All UDP/IPv4 fragments, including those without a UDP header.
+  bpf: "ip proto 17 and dst host 192.0.2.10"
+  direction: in
+  promiscuous: false
+  snaplen: 262144
+  buffer_size_bytes: 33554432
+reassembly:
+  enabled: true
+  timeout_seconds: 30
+  max_datagrams: 1024
+  max_bytes: 33554432
+  max_fragments_per_datagram: 128
+replication:
+  mode: raw_ipv4
+  fragmentation: auto
+  ttl: 64
+  queue_size_per_target: 4096
+  on_queue_full: drop_newest
+rules:
+  - name: snmp-traps
+    match:
+      source_cidrs: ["0.0.0.0/0"]
+      destination_cidrs: ["192.0.2.10/32"]
+      destination_ports: [162]
+    targets:
+      - {name: fm-primary, ip: 198.51.100.20, port: 162}
+      - {name: fm-secondary, ip: 198.51.100.21, port: 162}
+metrics:
+  enabled: true
+  listen: "127.0.0.1:9109"
+logging:
+  level: info
+  format: json

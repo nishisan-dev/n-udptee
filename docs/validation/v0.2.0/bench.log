@@ -1,0 +1,15 @@
+go test ./internal/decode ./internal/engine -run '^$' -bench . -benchmem
+goos: linux
+goarch: amd64
+pkg: github.com/nishisan-dev/n-udptee/internal/decode
+cpu: Intel(R) Core(TM) 7 150U
+BenchmarkDecode-12    	 3729226	       292.1 ns/op	 876.48 MB/s	     384 B/op	       2 allocs/op
+PASS
+ok  	github.com/nishisan-dev/n-udptee/internal/decode	1.097s
+goos: linux
+goarch: amd64
+pkg: github.com/nishisan-dev/n-udptee/internal/engine
+cpu: Intel(R) Core(TM) 7 150U
+BenchmarkFanout-12    	 4335249	       306.4 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/nishisan-dev/n-udptee/internal/engine	1.339s
