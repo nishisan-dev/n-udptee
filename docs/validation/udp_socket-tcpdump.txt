@@ -1,0 +1,6 @@
+09:45:05.468251 IP (tos 0x0, ttl 64, id 49480, offset 0, flags [DF], proto UDP (17), length 39)
+    10.10.0.1.57203 > 10.10.0.21.162: [bad udp cksum 0x144e -> 0xe017!]  [len9<asnlen110]
+09:45:05.740046 IP (tos 0x0, ttl 64, id 49701, offset 0, flags [DF], proto UDP (17), length 28)
+    10.10.0.1.57203 > 10.10.0.21.162: [bad udp cksum 0x1443 -> 0x0b9f!]  [nothing to parse]
+09:45:06.029026 IP (tos 0x0, ttl 64, id 49825, offset 0, flags [DF], proto UDP (17), length 284)
+    10.10.0.1.57203 > 10.10.0.21.162: [bad udp cksum 0x1543 -> 0x495f!]  [P/U/U-0][!init SEQ]_02

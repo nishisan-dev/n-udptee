@@ -1,0 +1,4 @@
+exit=1
+netplan-ovs-cleanup.service: Failed to open /run/systemd/system/netplan-ovs-cleanup.service: Permission denied
+/lib/systemd/system/snapd.service:23: Unknown key name 'RestartMode' in section 'Service', ignoring.
+n-udptee.service: Command /usr/local/bin/n-udptee is not executable: No such file or directory

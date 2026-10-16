@@ -1,0 +1,30 @@
+[Unit]
+Description=Passive UDP IPv4 replication
+Documentation=https://github.com/nishisan-dev/n-udptee
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+ExecStart=/usr/local/bin/n-udptee run --config /etc/n-udptee/config.yaml
+Restart=on-failure
+RestartSec=3s
+KillSignal=SIGTERM
+TimeoutStopSec=7s
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_PACKET AF_NETLINK AF_UNIX
+LockPersonality=yes
+RestrictRealtime=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,2 @@
+exit=1
+n-udptee: pcap activation (capture permissions/CAP_NET_RAW required): Permission Denied

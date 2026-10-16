@@ -1,0 +1,9 @@
+go test ./internal/decode -run '^$' -fuzz '^FuzzDecode$' -fuzztime=10s -parallel=2
+fuzz: elapsed: 0s, gathering baseline coverage: 0/3 completed
+fuzz: elapsed: 0s, gathering baseline coverage: 3/3 completed, now fuzzing with 2 workers
+fuzz: elapsed: 3s, execs: 137455 (45807/sec), new interesting: 7 (total: 10)
+fuzz: elapsed: 6s, execs: 193759 (18770/sec), new interesting: 7 (total: 10)
+fuzz: elapsed: 9s, execs: 272887 (26375/sec), new interesting: 7 (total: 10)
+fuzz: elapsed: 10s, execs: 306048 (32035/sec), new interesting: 7 (total: 10)
+PASS
+ok  	github.com/nishisan-dev/n-udptee/internal/decode	10.044s

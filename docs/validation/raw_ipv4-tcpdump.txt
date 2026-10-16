@@ -1,0 +1,6 @@
+09:45:02.489015 IP (tos 0x0, ttl 64, id 0, offset 0, flags [DF], proto UDP (17), length 39)
+    10.10.0.2.40000 > 10.10.0.21.162: [udp sum ok]  [len9<asnlen110]
+09:45:02.706774 IP (tos 0x0, ttl 64, id 0, offset 0, flags [DF], proto UDP (17), length 28)
+    10.10.0.2.40000 > 10.10.0.21.162: [udp sum ok]  [nothing to parse]
+09:45:02.926816 IP (tos 0x0, ttl 64, id 0, offset 0, flags [DF], proto UDP (17), length 284)
+    10.10.0.2.40000 > 10.10.0.21.162: [udp sum ok]  [P/U/U-0][!init SEQ]_02

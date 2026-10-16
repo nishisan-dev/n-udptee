@@ -1,0 +1,17 @@
+mkdir -p build
+CGO_ENABLED=1 go build -ldflags '-X main.version=0.1.0 -X main.commit=unknown -X main.buildTime=2026-10-16T12:39:08Z' -o build/n-udptee ./cmd/n-udptee
+go test ./internal/decode ./internal/engine -run '^$' -bench . -benchmem
+goos: linux
+goarch: amd64
+pkg: github.com/nishisan-dev/n-udptee/internal/decode
+cpu: Intel(R) Core(TM) 7 150U
+BenchmarkDecode-12    	 4846968	       265.3 ns/op	 965.09 MB/s	     384 B/op	       2 allocs/op
+PASS
+ok  	github.com/nishisan-dev/n-udptee/internal/decode	1.291s
+goos: linux
+goarch: amd64
+pkg: github.com/nishisan-dev/n-udptee/internal/engine
+cpu: Intel(R) Core(TM) 7 150U
+BenchmarkFanout-12    	 3447819	       308.2 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/nishisan-dev/n-udptee/internal/engine	1.076s

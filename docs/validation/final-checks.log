@@ -1,0 +1,33 @@
+go vet ./...
+go test ./...
+ok  	github.com/nishisan-dev/n-udptee/cmd/n-udptee	0.008s
+ok  	github.com/nishisan-dev/n-udptee/internal/app	0.006s
+?   	github.com/nishisan-dev/n-udptee/internal/bpf	[no test files]
+ok  	github.com/nishisan-dev/n-udptee/internal/capture	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/config	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/decode	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/engine	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/match	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/metrics	(cached)
+?   	github.com/nishisan-dev/n-udptee/internal/model	[no test files]
+ok  	github.com/nishisan-dev/n-udptee/internal/send/rawipv4	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/send/udpsocket	(cached)
+ok  	github.com/nishisan-dev/n-udptee/tests/integration	(cached)
+go test -race ./...
+ok  	github.com/nishisan-dev/n-udptee/cmd/n-udptee	1.029s
+ok  	github.com/nishisan-dev/n-udptee/internal/app	1.034s
+?   	github.com/nishisan-dev/n-udptee/internal/bpf	[no test files]
+ok  	github.com/nishisan-dev/n-udptee/internal/capture	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/config	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/decode	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/engine	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/match	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/metrics	(cached)
+?   	github.com/nishisan-dev/n-udptee/internal/model	[no test files]
+ok  	github.com/nishisan-dev/n-udptee/internal/send/rawipv4	(cached)
+ok  	github.com/nishisan-dev/n-udptee/internal/send/udpsocket	(cached)
+ok  	github.com/nishisan-dev/n-udptee/tests/integration	(cached)
+mkdir -p build
+CGO_ENABLED=1 go build -ldflags '-X main.version=0.1.0 -X main.commit=unknown -X main.buildTime=2026-10-16T12:47:07Z' -o build/n-udptee ./cmd/n-udptee
+./build/n-udptee check --config configs/example.yaml
+configuration valid (offline Ethernet BPF); interface and ingress validated at run

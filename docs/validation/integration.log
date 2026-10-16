@@ -1,0 +1,8 @@
+=== RUN   TestNamespaces
+    integration_test.go:44: PASS raw_ipv4 original + two targets, payload/source, ingress, errors, burst, shutdown
+        PASS udp_socket original + two targets, payload/source, ingress, errors, burst, shutdown
+        PASS raw_ipv4 destination port rewrite
+        
+--- PASS: TestNamespaces (8.01s)
+PASS
+ok  	github.com/nishisan-dev/n-udptee/tests/integration	8.011s

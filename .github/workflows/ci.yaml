@@ -1,0 +1,31 @@
+name: ci
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Native CGO dependencies
+        run: sudo apt-get update && sudo apt-get install -y libpcap-dev gcc iproute2 tcpdump python3
+      - run: make fmt-check vet test race check fuzz
+      - name: Namespace integration
+        run: |
+          mkdir -p build/reports
+          sudo env PATH="$PATH" CGO_ENABLED=1 N_UDPTEE_INTEGRATION=1 N_UDPTEE_LAB_OUTPUT="$PWD/build/reports/integration" go test -v -count=1 -timeout=120s ./tests/integration
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: n-udptee-${{ matrix.runner }}
+          path: |
+            build/n-udptee
+            build/reports/
